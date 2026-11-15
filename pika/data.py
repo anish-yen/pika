@@ -75,7 +75,7 @@ class LongLong(int):
     Arithmetic on a `LongLong` returns a plain `int`, and a serializer that accepts only an exact
     `int`, such as `yaml.safe_dump`, needs `int(value)`.
 
-    Encoding a value outside signed 64-bit     Encoding a value outside signed 64-bit raises `pika.exceptions.UnencodableLongError`.
+    Encoding a value outside signed 64-bit raises `pika.exceptions.UnencodableLongError`.
     """
 
     __slots__ = ()
