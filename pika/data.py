@@ -52,6 +52,10 @@ _PACK_TAG_INT = struct.Struct('>ci')
 _PACK_TAG_LONG_LONG = struct.Struct('>cq')
 _PACK_TAG_UNSIGNED_LONG_LONG = struct.Struct('>cQ')
 _PACK_TAG_BYTE_INT = struct.Struct('>cBi')
+_PACK_TAG_SIGNED_BYTE = struct.Struct('>cb')
+_PACK_TAG_SHORT = struct.Struct('>ch')
+_PACK_TAG_USHORT = struct.Struct('>cH')
+_PACK_TAG_FLOAT = struct.Struct('>cf')
 _PACK_TAG_DOUBLE = struct.Struct('>cd')
 
 # Reference point for decoding the `timestamp` field type. Adding a
@@ -71,11 +75,115 @@ class LongLong(int):
     Arithmetic on a `LongLong` returns a plain `int`, and a serializer that accepts only an exact
     `int`, such as `yaml.safe_dump`, needs `int(value)`.
 
-    Encoding a value outside signed 64-bit raises `pika.exceptions.UnencodableLongError`.
+    Encoding a value outside signed 64-bit     Encoding a value outside signed 64-bit raises `pika.exceptions.UnencodableLongError`.
     """
 
     __slots__ = ()
 
+
+class ShortShortInt(int):
+    """
+    An `int` that is sent as a signed 8-bit `b` field-table value.
+
+    `b` is how Java sends a `Byte`, .NET an `sbyte` and Go an `int8`, and what each decodes `b`
+    into. Values decoded from `b` fields are `ShortShortInt`, so a received header is sent on with
+    the same type. Arithmetic on a `ShortShortInt` returns a plain `int`, and a serializer that
+    accepts only an exact `int`, such as `yaml.safe_dump`, needs `int(value)`.
+
+    Encoding a value outside signed 8-bit raises `ValueError`.
+    """
+
+    __slots__ = ()
+
+
+class ShortShortUInt(int):
+    """
+    An `int` that is sent as an unsigned 8-bit `B` field-table value.
+
+    `B` is how .NET sends a `byte` and Go a `uint8` (Java sends its unsigned 8-bit values as wider
+    types). Values decoded from `B` fields are `ShortShortUInt`, so a received header is sent on
+    with the same type. Arithmetic on a `ShortShortUInt` returns a plain `int`, and a serializer
+    that accepts only an exact `int`, such as `yaml.safe_dump`, needs `int(value)`.
+
+    Encoding a value outside unsigned 8-bit raises `ValueError`.
+    """
+
+    __slots__ = ()
+
+
+class ShortInt(int):
+    """
+    An `int` that is sent as a signed 16-bit `s` field-table value.
+
+    `s` is how Java sends a `Short`, .NET a `short` and Go an `int16`, and what each decodes a
+    signed 16-bit field into. RabbitMQ writes the same type as `U`; values decoded from `U` or `s`
+    fields are both `ShortInt` and are re-sent as `s`, the tag the reference clients use. Arithmetic
+    on a `ShortInt` returns a plain `int`, and a serializer that accepts only an exact `int`, such
+    as `yaml.safe_dump`, needs `int(value)`.
+
+    Encoding a value outside signed 16-bit raises `ValueError`.
+    """
+
+    __slots__ = ()
+
+
+class ShortUInt(int):
+    """
+    An `int` that is sent as an unsigned 16-bit `u` field-table value.
+
+    `u` is how .NET sends a `ushort` and Go a `uint16` (Java sends its unsigned 16-bit values as
+    wider types). Values decoded from `u` fields are `ShortUInt`, so a received header is sent on
+    with the same type. Arithmetic on a `ShortUInt` returns a plain `int`, and a serializer that
+    accepts only an exact `int`, such as `yaml.safe_dump`, needs `int(value)`.
+
+    Encoding a value outside unsigned 16-bit raises `ValueError`.
+    """
+
+    __slots__ = ()
+
+
+class LongUInt(int):
+    """
+    An `int` that is sent as an unsigned 32-bit `i` field-table value.
+
+    `i` is how .NET sends a `uint` and Go a `uint32` (Java sends its unsigned 32-bit values as a
+    `Long`). Values decoded from `i` fields are `LongUInt`, so a received header is sent on with the
+    same type. Arithmetic on a `LongUInt` returns a plain `int`, and a serializer that accepts only
+    an exact `int`, such as `yaml.safe_dump`, needs `int(value)`.
+
+    Encoding a value outside unsigned 32-bit raises `ValueError`.
+    """
+
+    __slots__ = ()
+
+
+class Float32(float):
+    """
+    A `float` that is sent as a 32-bit `f` field-table value instead of a 64-bit `d`.
+
+    `f` is how Java sends a `Float`, .NET a `float` and Go a `float32`, and what each decodes `f`
+    into. Values decoded from `f` fields are `Float32`, so a received header is sent on with the
+    same type; such a value is exactly float32-representable and the re-encode is lossless. A
+    `Float32` constructed by hand is rounded to float32 precision when encoded. Arithmetic on a
+    `Float32` returns a plain `float`, and a serializer that accepts only an exact `float` needs
+    `float(value)`.
+
+    Encoding a non-finite value raises `pika.exceptions.UnencodableFloatError`.
+    """
+
+    __slots__ = ()
+
+
+# The narrow integer marker classes, mapped to the packer, type tag and valid
+# range that re-encode a decoded value with its original tag. `LongLong` keeps
+# its own branch in `encode_value`, where plain `int` values also fall through.
+_NARROW_INT_ENCODE: dict[type, tuple[struct.Struct, bytes, int, int]] = {
+    ShortShortInt: (_PACK_TAG_SIGNED_BYTE, b'b', -128, 127),
+    ShortShortUInt: (_PACK_TAG_BYTE, b'B', 0, 255),
+    ShortInt: (_PACK_TAG_SHORT, b's', -32768, 32767),
+    ShortUInt: (_PACK_TAG_USHORT, b'u', 0, 65535),
+    LongUInt: (_PACK_TAG_UINT, b'i', 0, 4294967295),
+}
 
 # Single-byte `bytes` objects indexed by value. Shared with `pika.spec`,
 # which imports this table for its bit-field buffers.
@@ -181,6 +289,15 @@ def encode_value(pieces: list[bytes], value: Any) -> int:
         pieces.append(_PACK_TAG_BYTE.pack(b't', int(value)))
         return 2
     if isinstance(value, int):
+        narrow = _NARROW_INT_ENCODE.get(type(value))
+        if narrow is not None:
+            pack, tag, minimum, maximum = narrow
+            if not minimum <= value <= maximum:
+                raise ValueError(
+                    f'{value!r} does not fit the {type(value).__name__} '
+                    'field-table type')
+            pieces.append(pack.pack(tag, value))
+            return pack.size
         if not isinstance(value, LongLong):
             try:
                 pieces.append(_PACK_TAG_INT.pack(b'I', value))
@@ -200,8 +317,13 @@ def encode_value(pieces: list[bytes], value: Any) -> int:
         # connection with 541 INTERNAL_ERROR, so reject it before sending.
         if not math.isfinite(value):
             raise exceptions.UnencodableFloatError(value)
+        # An explicit Float32 asks for the 32-bit 'f' tag; the pack rounds the
+        # Python float to float32 precision.
+        if isinstance(value, Float32):
+            pieces.append(_PACK_TAG_FLOAT.pack(b'f', value))
+            return 5
         # A Python float is a C double, so 'd' is the lossless tag. It is also
-        # what decode_value yields for both 'f' and 'd'.
+        # what decode_value yields for a 'd' field.
         pieces.append(_PACK_TAG_DOUBLE.pack(b'd', value))
         return 9
     if isinstance(value, decimal.Decimal):
@@ -360,27 +482,27 @@ def decode_value(encoded: bytes, offset: int) -> tuple[Any, int]:
 
     # Short-Short Int
     elif kind == _FIELD_SHORT_SHORT_INT:
-        value = _PACK_SIGNED_BYTE.unpack_from(encoded, offset)[0]
+        value = ShortShortInt(_PACK_SIGNED_BYTE.unpack_from(encoded, offset)[0])
         offset += 1
 
     # Short-Short Unsigned Int
     elif kind == _FIELD_SHORT_SHORT_UINT:
-        value = encoded[offset]
+        value = ShortShortUInt(encoded[offset])
         offset += 1
 
     # Short Int
     elif kind == _FIELD_SHORT_INT:
-        value = _PACK_SHORT_SIGNED.unpack_from(encoded, offset)[0]
+        value = ShortInt(_PACK_SHORT_SIGNED.unpack_from(encoded, offset)[0])
         offset += 2
 
     # Short Unsigned Int
     elif kind == _FIELD_SHORT_UINT:
-        value = _PACK_USHORT.unpack_from(encoded, offset)[0]
+        value = ShortUInt(_PACK_USHORT.unpack_from(encoded, offset)[0])
         offset += 2
 
     # Long Unsigned Int
     elif kind == _FIELD_LONG_UINT:
-        value = _PACK_UINT.unpack_from(encoded, offset)[0]
+        value = LongUInt(_PACK_UINT.unpack_from(encoded, offset)[0])
         offset += 4
 
     # Long-Long Int
@@ -390,7 +512,7 @@ def decode_value(encoded: bytes, offset: int) -> tuple[Any, int]:
 
     # Float
     elif kind == _FIELD_FLOAT:
-        value = _PACK_FLOAT.unpack_from(encoded, offset)[0]
+        value = Float32(_PACK_FLOAT.unpack_from(encoded, offset)[0])
         offset += 4
 
     # Double
@@ -410,7 +532,7 @@ def decode_value(encoded: bytes, offset: int) -> tuple[Any, int]:
     # https://github.com/pika/pika/issues/1205
     # Short Signed Int
     elif kind == _FIELD_SHORT_INT_ALT:
-        value = _PACK_SHORT_SIGNED.unpack_from(encoded, offset)[0]
+        value = ShortInt(_PACK_SHORT_SIGNED.unpack_from(encoded, offset)[0])
         offset += 2
 
     # Null / Void

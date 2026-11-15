@@ -147,6 +147,75 @@ class DataTests(unittest.TestCase):
     def test_long_long_arithmetic_returns_int(self):
         self.assertIs(type(data.LongLong(5) + 1), int)
 
+    # A header table holding one of every narrow integer and float tag, as
+    # RabbitMQ's AMQP 1.0 conversion or the Java, .NET and Go clients send it.
+    NARROW_TBL_ENCODED = (b'\x00\x00\x007'
+                          b'\x04byteb\xfe'
+                          b'\x05ubyteB\xc8'
+                          b'\x05shorts\xfb \x06ushortu\xc3P'
+                          b'\x04uinti\xb2\xd0\x5e\x00'
+                          b'\x05floatf@ \x00\x00')
+
+    NARROW_TBL_VALUE: ClassVar[OrderedDict] = OrderedDict([
+        ('byte', data.ShortShortInt(-2)),
+        ('ubyte', data.ShortShortUInt(200)),
+        ('short', data.ShortInt(-1248)),
+        ('ushort', data.ShortUInt(50000)),
+        ('uint', data.LongUInt(3000000000)),
+        ('float', data.Float32(2.5)),
+    ])
+
+    def test_narrow_tags_round_trip_a_table_byte_exact(self):
+        value, _ = data.decode_table(self.NARROW_TBL_ENCODED, 0)
+        self.assertDictEqual(value, self.NARROW_TBL_VALUE)
+        for key, expected in self.NARROW_TBL_VALUE.items():
+            self.assertIs(type(value[key]), type(expected))
+        pieces = []
+        data.encode_table(pieces, value)
+        self.assertEqual(b''.join(pieces), self.NARROW_TBL_ENCODED)
+
+    def test_U_decodes_as_short_int_and_is_resent_as_s(self):
+        value, _ = data.decode_value(b'U\x04\xd2', 0)
+        self.assertIs(type(value), data.ShortInt)
+        self.assertEqual(value, 1234)
+        pieces = []
+        data.encode_value(pieces, value)
+        self.assertEqual(b''.join(pieces), b's\x04\xd2')
+
+    def test_user_constructed_narrow_markers_encode_with_their_tag(self):
+        cases = [
+            (data.ShortShortInt(-1), b'b\xff'),
+            (data.ShortShortUInt(200), b'B\xc8'),
+            (data.ShortInt(-300), b's\xfe\xd4'),
+            (data.ShortUInt(60000), b'u\xea\x60'),
+            (data.LongUInt(3000000000), b'i\xb2\xd0\x5e\x00'),
+            (data.Float32(2.5), b'f@ \x00\x00'),
+        ]
+        for value, expected in cases:
+            with self.subTest(value=value):
+                pieces = []
+                data.encode_value(pieces, value)
+                self.assertEqual(b''.join(pieces), expected)
+
+    def test_narrow_marker_outside_its_range_raises_value_error(self):
+        cases = [
+            (data.ShortShortInt, (-129, 128)),
+            (data.ShortShortUInt, (-1, 256)),
+            (data.ShortInt, (-32769, 32768)),
+            (data.ShortUInt, (-1, 65536)),
+            (data.LongUInt, (-1, 2**32)),
+        ]
+        for cls, values in cases:
+            for value in values:
+                with self.subTest(cls=cls, value=value):
+                    self.assertRaises(ValueError, data.encode_value, [],
+                                      cls(value))
+
+    def test_narrow_marker_arithmetic_returns_a_plain_type(self):
+        self.assertIs(type(data.ShortInt(5) + 1), int)
+        self.assertIs(type(data.LongUInt(5) + 1), int)
+        self.assertIs(type(data.Float32(1.5) + 1), float)
+
     def test_bytes_table_key_is_encoded_as_is(self):
         pieces = []
         data.encode_table(pieces, {b'k\xff': 1})
