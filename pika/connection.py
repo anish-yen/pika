@@ -611,7 +611,8 @@ class ConnectionParameters(Parameters):
             in asynchronous adapters or raising it in `BlockingConnection`.
         :param client_properties: None or dict of client properties used to
             override the fields in the default client properties reported to
-            RabbitMQ via `Connection.StartOk` method.
+            RabbitMQ via `Connection.StartOk` method. A `capabilities` dict is
+            merged into pika's default capabilities rather than replacing them.
         :param tcp_options: None or a dict of TCP options to set for socket
         """
         super().__init__()
@@ -697,7 +698,8 @@ class URLParameters(Parameters):
         - client_properties:
             dict of client properties used to override the fields in the default
             client properties reported to RabbitMQ via `Connection.StartOk`
-            method
+            method. A `capabilities` dict is merged into pika's default
+            capabilities rather than replacing them.
         - connection_attempts:
             Specify how many times pika should try and reconnect before it gives up
         - frame_max:
@@ -1661,19 +1663,11 @@ class Connection(abc.ABC):
         }
 
         if self.params.client_properties:
-            client_capabilities = self.params.client_properties.get(
-                'capabilities')
-            if isinstance(client_capabilities, dict):
-                # Merge capabilities one level deep: an application may add
-                # flags, or switch individual flags off, without discarding
-                # the rest of the capabilities pika advertises (#1791).
-                properties['capabilities'].update(client_capabilities)
-            properties.update({
-                key: value
-                for key, value in self.params.client_properties.items()
-                if key != 'capabilities' or
-                not isinstance(client_capabilities, dict)
-            })
+            overrides = dict(self.params.client_properties)
+            capabilities = overrides.get('capabilities')
+            if isinstance(capabilities, dict):
+                properties['capabilities'].update(overrides.pop('capabilities'))
+            properties.update(overrides)
 
         return properties
 
