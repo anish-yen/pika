@@ -553,7 +553,8 @@ class ConnectionTests(unittest.TestCase):
             'capabilities': {
                 'consumer_cancel_notify': False,
                 'custom_extension_flag': True,
-            }
+            },
+            'connection_name': 'custom name',
         }
         params = connection.ConnectionParameters(client_properties=override)
 
@@ -561,16 +562,31 @@ class ConnectionTests(unittest.TestCase):
                                '_adapter_connect_stream'):
             conn = ConstructibleConnection(params)
 
-        capabilities = conn._client_properties['capabilities']
-        # The application may add flags and switch individual flags off...
+        client_properties = conn._client_properties
+        capabilities = client_properties['capabilities']
+        self.assertEqual(client_properties['connection_name'], 'custom name')
+        self.assertDictEqual(params.client_properties['capabilities'], {
+            'consumer_cancel_notify': False,
+            'custom_extension_flag': True,
+        })
+        self.assertEqual(conn._client_properties, client_properties)
         self.assertTrue(capabilities['custom_extension_flag'])
         self.assertFalse(capabilities['consumer_cancel_notify'])
-        # ...without discarding the rest of pika's capabilities (#1791).
         for expected_key in ('authentication_failure_close', 'basic.nack',
                              'connection.blocked', 'exchange_exchange_bindings',
                              'publisher_confirms'):
             self.assertTrue(capabilities[expected_key],
                             f'{expected_key} discarded')
+
+    def test_client_properties_capabilities_non_dict_preserves_override(self):
+        for value in (None, False, 'custom', []):
+            with self.subTest(value=value):
+                params = connection.ConnectionParameters(
+                    client_properties={'capabilities': value})
+                with mock.patch.object(ConstructibleConnection,
+                                       '_adapter_connect_stream'):
+                    conn = ConstructibleConnection(params)
+                self.assertEqual(conn._client_properties['capabilities'], value)
 
     def test_close_channels(self):
         """Test closing all channels."""
